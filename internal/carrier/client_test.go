@@ -187,6 +187,14 @@ func TestIsLikelyNonBatchRelayPayload(t *testing.T) {
 		{name: "http", in: []byte("HTTP/1.1 502 Bad Gateway"), want: true},
 		{name: "base64ish", in: []byte("QUJDRA=="), want: false},
 		{name: "empty", in: []byte(" \r\n\t "), want: false},
+		// v1.7.0 Code.gs sentinels — exact strings the old forwarder
+		// would return with HTTP 200 when the VPS was unreachable. Sniffing
+		// these prevents a downstream "base64 decode: illegal base64 data at
+		// input byte 9" (Exception: → fails at the colon).
+		{name: "codegs_exception", in: []byte("Exception: Address unavailable: http://1.2.3.4:5443/tunnel"), want: true},
+		{name: "codegs_relay_loop", in: []byte("relay_loop_detected: RELAY_URLS must point to your VPS"), want: true},
+		{name: "codegs_upstream_status", in: []byte("upstream status 502: bad gateway"), want: true},
+		{name: "codegs_upstream_fetch", in: []byte("upstream fetch error: Exception: Address unavailable"), want: true},
 	}
 
 	for _, tc := range tests {

@@ -1368,6 +1368,20 @@ func isLikelyNonBatchRelayPayload(body []byte) bool {
 	if t[0] == '{' || t[0] == '[' || bytes.HasPrefix(t, []byte("HTTP/")) {
 		return true
 	}
+	// Code.gs sentinels emitted with HTTP 200 by v1.7.0's forwarder when it
+	// caught upstream failures. v1.7.1 Code.gs throws instead of returning 200,
+	// so these prefixes shouldn't appear from a redeployed script — but users
+	// often forget to redeploy, so we keep the sniffer broad. Detecting the
+	// prefix lets the carrier surface a clear log line instead of producing
+	// "batch: base64 decode: illegal base64 data at input byte 9" noise (which
+	// is what tripping past this check produces when DecodeBatch hits the
+	// first colon in "Exception:" or "upstream fetch error:").
+	if bytes.HasPrefix(t, []byte("Exception:")) ||
+		bytes.HasPrefix(t, []byte("relay_loop_detected:")) ||
+		bytes.HasPrefix(t, []byte("upstream status ")) ||
+		bytes.HasPrefix(t, []byte("upstream fetch error:")) {
+		return true
+	}
 	return false
 }
 
@@ -1382,7 +1396,24 @@ func isLikelyNonBatchRelayPayload(body []byte) bool {
 //	developers.google.com/apps-script/guides/support/troubleshooting
 //	developers.google.com/apps-script/guides/services/quotas
 func classifyRelayErrorBody(body []byte) (reason string, hard bool) {
-	lower := strings.ToLower(string(bytes.TrimSpace(body)))
+	trimmed := bytes.TrimSpace(body)
+	lower := strings.ToLower(string(trimmed))
+
+	// ── Code.gs sentinels from v1.7.0 forwarder ────────────────────────────
+	// v1.7.0 Code.gs returned these strings with HTTP 200 when UrlFetchApp
+	// failed; v1.7.1 throws instead, but un-redeployed scripts still emit them.
+	// Classified here so users get an actionable message rather than the
+	// generic "non-batch payload" log.
+	if bytes.HasPrefix(trimmed, []byte("relay_loop_detected:")) {
+		return "Code.gs RELAY_URLS points at script.google.com — set it to your VPS /tunnel endpoint and redeploy", true
+	}
+	if bytes.HasPrefix(trimmed, []byte("upstream fetch error:")) ||
+		bytes.HasPrefix(trimmed, []byte("Exception:")) {
+		return "Code.gs could not reach your VPS — check VPS is up, the server_port in server_config.json matches RELAY_URLS, and the VPS firewall allows inbound from Google's egress IPs", false
+	}
+	if bytes.HasPrefix(trimmed, []byte("upstream status ")) {
+		return "VPS returned a non-200 status to Apps Script — check goose-server logs on your VPS", false
+	}
 
 	// ── Quota / rate-limit ─────────────────────────────────────────────────
 	// "Service invoked too many times for one day: urlfetch."

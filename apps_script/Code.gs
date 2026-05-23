@@ -22,16 +22,17 @@ const GAS_RELAY_LOOP_RE = /^https?:\/\/script\.google\.com\/macros\//i;
 function doPost(e) {
   for (let i = 0; i < RELAY_URLS.length; i++) {
     if (GAS_RELAY_LOOP_RE.test(RELAY_URLS[i])) {
-      return ContentService
-        .createTextOutput('relay_loop_detected: RELAY_URLS must point to your VPS /tunnel endpoint, not Apps Script')
-        .setMimeType(ContentService.MimeType.TEXT);
+      // Throw so Apps Script returns HTTP 500. Returning 200 with this
+      // diagnostic text would be parsed by the client as a base64 batch and
+      // fail at the colon — see the v1.7.0 → v1.7.1 fix in client.go.
+      throw new Error('relay_loop_detected: RELAY_URLS must point to your VPS /tunnel endpoint, not Apps Script');
     }
   }
   if (ENABLE_INVOCATION_COUNTING) {
     bumpInvocationCount_();
   }
   const payload = (e && e.postData && e.postData.contents) || '';
-  let lastText = '';
+  let lastError = 'no RELAY_URLS configured';
   for (let i = 0; i < RELAY_URLS.length; i++) {
     try {
       const resp = UrlFetchApp.fetch(RELAY_URLS[i], {
@@ -44,24 +45,24 @@ function doPost(e) {
       });
       const status = resp.getResponseCode();
       const text = resp.getContentText();
-      lastText = text;
       if (status === 200) {
         return ContentService
           .createTextOutput(text)
           .setMimeType(ContentService.MimeType.TEXT);
       }
-      lastText = JSON.stringify({
-        e: 'upstream_status',
-        status: status,
-        body: text.slice(0, 1024),
-      });
+      lastError = 'upstream status ' + status + ': ' + text.slice(0, 1024);
     } catch (err) {
-      lastText = String(err);
+      lastError = 'upstream fetch error: ' + String(err);
     }
   }
-  return ContentService
-    .createTextOutput(lastText)
-    .setMimeType(ContentService.MimeType.TEXT);
+  // All RELAY_URLS failed. Throw so Apps Script returns HTTP 500 with an
+  // HTML error page — the GooseRelay client's non-200 code path treats this
+  // as a clean endpoint failure and rotates to the next deployment. Returning
+  // 200 with a plain-text error body (as v1.7.0 did) was the cause of the
+  // "batch: base64 decode: illegal base64 data at input byte 9" client log
+  // spam: the client would try to base64-decode "upstream fetch error: …"
+  // and fail at the first colon.
+  throw new Error(lastError);
 }
 
 // doGet returns this deployment's per-day invocation count so the client can
