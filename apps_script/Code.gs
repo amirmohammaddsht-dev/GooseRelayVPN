@@ -11,7 +11,6 @@
 
 const RELAY_URLS = [
   // Replace YOUR_SERVER_PORT with server_config.json's server_port.
-  // The dist/server_config.json used for the current test listens on 5443.
   'http://YOUR.VPS.IP:YOUR_SERVER_PORT/tunnel',
 ];
 const FORWARDER_VERSION = 1;
