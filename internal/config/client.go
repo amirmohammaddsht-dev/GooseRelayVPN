@@ -399,19 +399,19 @@ func LoadClient(path string) (*Client, error) {
 	}
 
 	c := Client{
-		ListenAddr:                  net.JoinHostPort(listenHost, strconv.Itoa(listenPort)),
-		GoogleIP:                    googleIP,
-		SNIHosts:                    sniHosts,
-		ScriptURLs:                  scriptURLs,
-		ScriptAccounts:              scriptAccounts,
-		UseFronting:                 useFronting,
-		AESKeyHex:                   key,
-		DebugTiming:                 f.DebugTiming,
-		SocksUser:                   socksUser,
-		SocksPass:                   socksPass,
-		CoalesceStepMs:              f.CoalesceStepMs,
-		CoalesceMaxMs:               coalesceMax,
-		IdleSlotsPerBucket:          f.IdleSlotsPerBucket,
+		ListenAddr:         net.JoinHostPort(listenHost, strconv.Itoa(listenPort)),
+		GoogleIP:           googleIP,
+		SNIHosts:           sniHosts,
+		ScriptURLs:         scriptURLs,
+		ScriptAccounts:     scriptAccounts,
+		UseFronting:        useFronting,
+		AESKeyHex:          key,
+		DebugTiming:        f.DebugTiming,
+		SocksUser:          socksUser,
+		SocksPass:          socksPass,
+		CoalesceStepMs:     f.CoalesceStepMs,
+		CoalesceMaxMs:      coalesceMax,
+		IdleSlotsPerBucket: f.IdleSlotsPerBucket,
 	}
 	return &c, nil
 }

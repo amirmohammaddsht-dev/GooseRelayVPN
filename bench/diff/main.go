@@ -4,10 +4,10 @@
 // Tracked metrics per scenario (others are ignored — only "headline" numbers
 // drive pass/fail):
 //
-//   throughput_*      mb_per_sec       (higher is better)
-//   ttfb_p50_p95      p50_us, p95_us, p99_us (lower is better)
-//   sessions_per_sec  per_sec          (higher is better)
-//   idle_overhead_30s client_cpu_mean, server_cpu_mean (lower is better)
+//	throughput_*      mb_per_sec       (higher is better)
+//	ttfb_p50_p95      p50_us, p95_us, p99_us (lower is better)
+//	sessions_per_sec  per_sec          (higher is better)
+//	idle_overhead_30s client_cpu_mean, server_cpu_mean (lower is better)
 //
 // The threshold is read from BENCH_FAIL_THRESHOLD_PCT (default 10).
 package main

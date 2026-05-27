@@ -228,7 +228,7 @@ func allScenarios() []scenario {
 		{"throughput_down_8MB_1session", scenarioThroughputDown(8 * 1024 * 1024)},
 		{"ttfb_p50_p95", scenarioTTFB(50)},
 		{"sessions_per_sec", scenarioSessionsPerSec(10 * time.Second)},
-		{"idle_overhead_15s", scenarioIdleOverhead(15 * time.Second, 50)},
+		{"idle_overhead_15s", scenarioIdleOverhead(15*time.Second, 50)},
 	}
 }
 
@@ -458,13 +458,13 @@ func scenarioIdleOverhead(d time.Duration, sessions int) func(context.Context, *
 			}
 		}
 		return map[string]any{
-			"sessions":         sessions,
-			"duration_ms":      d.Milliseconds(),
-			"samples":          len(clientCPU),
-			"client_cpu_mean":  round2(meanFloat(clientCPU)),
-			"client_cpu_max":   round2(maxFloat(clientCPU)),
-			"server_cpu_mean":  round2(meanFloat(serverCPU)),
-			"server_cpu_max":   round2(maxFloat(serverCPU)),
+			"sessions":        sessions,
+			"duration_ms":     d.Milliseconds(),
+			"samples":         len(clientCPU),
+			"client_cpu_mean": round2(meanFloat(clientCPU)),
+			"client_cpu_max":  round2(maxFloat(clientCPU)),
+			"server_cpu_mean": round2(meanFloat(serverCPU)),
+			"server_cpu_max":  round2(maxFloat(serverCPU)),
 		}, nil
 	}
 }

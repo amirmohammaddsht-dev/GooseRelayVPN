@@ -11,11 +11,11 @@ const (
 )
 
 type VersionInfo struct {
-	OK             bool     `json:"ok"`
-	Protocol       int      `json:"protocol"`
-	ServerVersion  string   `json:"server_version"`
-	MaxFramePayload int     `json:"max_frame_payload"`
-	Features       []string `json:"features"`
+	OK              bool     `json:"ok"`
+	Protocol        int      `json:"protocol"`
+	ServerVersion   string   `json:"server_version"`
+	MaxFramePayload int      `json:"max_frame_payload"`
+	Features        []string `json:"features"`
 }
 
 type VersionProbe struct {
