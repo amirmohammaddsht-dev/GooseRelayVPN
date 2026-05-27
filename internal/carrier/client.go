@@ -199,7 +199,7 @@ type Config struct {
 	CoalesceMax  time.Duration
 
 	// IdleSlotsPerBucket is the number of concurrent idle long-polls allowed
-	// per account bucket. <= 0 means default (1). Validated and capped at 3
+	// per account bucket. <= 0 means default (2). Validated and capped at 3
 	// by the config layer; the carrier accepts any positive value here but
 	// users should configure through the config layer to get the cap and the
 	// "why this cap" error message.

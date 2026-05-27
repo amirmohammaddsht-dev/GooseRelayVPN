@@ -100,10 +100,11 @@ type clientFile struct {
 	CoalesceStepMs int `json:"coalesce_step_ms"`
 
 	// Optional download-throughput tuning. Concurrent idle long-polls per
-	// account bucket. Default 1 (safe). Set to 2 to roughly double download
-	// throughput when each account has 2+ deployments. Higher than 3 is
-	// rejected — past that the per-account concurrency cap that issue #56
-	// surfaced becomes reachable again.
+	// account bucket. Default 2 (best balance for accounts with 2+
+	// deployments). Lower to 1 if each account has a single deployment.
+	// Raise to 3 for accounts with 3+ deployments. Higher than 3 is rejected —
+	// past that the per-account concurrency cap that issue #56 surfaced
+	// becomes reachable again.
 	IdleSlotsPerBucket int `json:"idle_slots_per_bucket"`
 }
 
