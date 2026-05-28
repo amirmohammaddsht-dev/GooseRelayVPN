@@ -27,7 +27,7 @@
 
 - هرگز `tunnel_key` را با کسی به اشتراک نگذارید. هر کسی این کلید را داشته باشد می‌تواند مثل شما از تونل/VPS استفاده کند.
 - داشتن یک سرور با دسترسی اینترنت عمومی الزامی است. سرور خروجی باید از سمت Google Apps Script قابل دسترسی باشد.
-- هر Deployment ID در Google Apps Script حدود ۲۰٬۰۰۰ اجرا در روز سهمیه دارد و این سهمیه حدود ساعت ۱۰:۳۰ صبح به وقت ایران (GMT+3:30) ریست می‌شود.
+- هر اکانت گوگل روی Apps Script رایگان حدود ۲۰٬۰۰۰ فراخوانی UrlFetch در روز سهمیه دارد (سهمیه بین همهٔ deploymentهای زیر یک اکانت **مشترک** است، نه per-deployment). این سهمیه نیمه‌شب Pacific ریست می‌شود — یعنی حدود ۱۰:۳۰ صبح به وقت ایران در تابستان و ۱۱:۳۰ صبح در زمستان.
 - در این پروژه نیازی به نصب گواهی MITM محلی ندارید. تنظیمات گواهی در `MasterHttpRelayVPN` مخصوص معماری همان پروژه است و اینجا لازم نیست.
 - این پروژه از ایده مخزن اصلی الهام گرفته است: https://github.com/masterking32/MasterHttpRelayVPN
 
@@ -177,10 +177,13 @@ cp server_config.example.json server_config.json
 1. وارد [Google Apps Script](https://script.google.com/) شوید و لاگین کنید.
 2. روی **New project** کلیک کنید.
 3. کد پیش‌فرض را حذف کنید و همه محتوای [`apps_script/Code.gs`](apps_script/Code.gs) را جایگزین کنید.
-4. این خط را با IP VPS خودتان جایگزین کنید:
+4. این خط را با IP و پورت VPS خودتان جایگزین کنید:
    ```javascript
-   const VPS_URL = 'http://YOUR.VPS.IP:8443/tunnel';
+   const RELAY_URLS = [
+     'http://YOUR.VPS.IP:8443/tunnel',
+   ];
    ```
+   `RELAY_URLS` یک آرایه است تا بتوانید چند VPS را به‌عنوان exit پشتیبان لیست کنید — `Code.gs` آن‌ها را به ترتیب امتحان می‌کند و فقط در صورت خطا به مورد بعدی failover می‌کند. برای یک VPS تنها، یک عضو کافی است.
 5. روی **Deploy → New deployment** کلیک کنید و نوع را **Web app** بگذارید.
 6. **Execute as:** Me و **Who has access:** Anyone را انتخاب کنید.
 7. روی **Deploy** بزنید. یک پنجره باز می‌شود که **Deployment ID** را نشان می‌دهد. آن را کپی و در `script_keys` قرار دهید.
@@ -446,7 +449,7 @@ nano client_config.json
 
 سهمیه **~۲۰٬۰۰۰ فراخوانی در روز به ازای هر اکانت گوگل** اعمال می‌شود، نه به ازای هر deployment یا پروژه — همه deploymentهای یک اکانت از یک quota مشترک استفاده می‌کنند. کلاینت در حالت بی‌کار حدود یک بار در ثانیه poll می‌کند، اما اپ‌های real-time مثل **تلگرام یا X می‌توانند quota را ظرف چند ساعت تمام کنند**. برای عبور از این محدودیت، `Code.gs` را روی **اکانت‌های مختلف گوگل** deploy کنید و همه Deployment IDها را در `script_keys` بگذارید.
 
-> ⚠️ **هر deployment را با اکانت گوگلی که زیرش است برچسب (`account`) بزنید.** کلاینت میزان موازی‌کاری (۴ poll worker به ازای هر «bucket») را بر اساس **برچسب‌های اکانت متمایز** تنظیم می‌کند، نه بر اساس تعداد deployment — چون per-second concurrency cap در Apps Script هم per-account است. دو deployment زیر یک اکانت در یک bucket و یک quota هستند؛ دو deployment زیر دو اکانت متفاوت = دو bucket.
+> ⚠️ **هر deployment را با اکانت گوگلی که زیرش است برچسب (`account`) بزنید.** کلاینت deploymentها را بر اساس اکانت گروه‌بندی می‌کند تا سقف idle long-poll همزمان به ازای هر اکانت را درست اعمال کند — چون per-second concurrency cap در Apps Script هم per-account است. دو deployment زیر یک اکانت در یک bucket و یک quota روزانهٔ مشترک هستند؛ دو deployment زیر دو اکانت متفاوت = دو bucket و دو quota مجزا. (تعداد worker همیشه با تعداد deployment اسکیل می‌شود — ۳ worker به ازای هر deployment — مستقل از برچسب‌گذاری. چیزی که برچسب کنترل می‌کند این است که چند worker از آن‌ها همزمان مجاز هستند یک long-poll *idle* علیه یک اکانت گوگل نگه دارند.)
 
 ```json
 {
@@ -459,9 +462,9 @@ nano client_config.json
 }
 ```
 
-مثال بالا ۴ deployment روی ۲ اکانت = **۲ bucket → ۸ poll worker و ۲ long-poll همیشگی** — یعنی دو برابر موازی‌کاری و دو برابر quota روزانه نسبت به یک اکانت، بدون اینکه هیچ‌کدام را overload کند.
+مثال بالا ۴ deployment روی ۲ اکانت = **۱۲ poll worker (۳ به ازای هر deployment)، ۲ bucket و ۴ long-poll idle همیشگی (۲ به ازای هر bucket × ۲ bucket)** — یعنی دو برابر quota روزانهٔ یک اکانت، با رعایت سقف idle per-account که هیچ‌کدام anti-abuse Apps Script را trigger نکنند.
 
-اگر برچسب نزنید (`["ID1", "ID2", ...]` به‌صورت رشته خالی)، همه deploymentها در یک bucket ناشناس قرار می‌گیرند — همان تعداد worker و idle slot یک deployment تنها. کلاینت موقع راه‌اندازی یک `WARN` لاگ می‌کند تا این موضوع از چشم نیفتد. فقط وقتی واقعاً همه deploymentها زیر یک اکانت هستند رشته خالی استفاده کنید؛ در غیر این صورت برچسب بزنید.
+اگر برچسب نزنید (`["ID1", "ID2", ...]` به‌صورت رشتهٔ خالی)، هر deployment یک bucket ضمنی جدا می‌گیرد — یعنی تعداد worker و idle slot همچنان اسکیل می‌شود، اما اگر چند deployment بدون برچسب در واقع زیر یک اکانت گوگل باشند، کلاینت نمی‌تواند سقف per-account را اعمال کند و ممکن است وسط جلسه با صفحات HTML خطای Apps Script مواجه شوید. خط شروع `[carrier]` در لاگ می‌گوید کدام حالت فعال است. هر جا که می‌توانید deploymentها را با `account` برچسب بزنید؛ رشتهٔ خالی عمدتاً برای سازگاری با کانفیگ‌های قدیمی نگه داشته شده است.
 
 کلاینت به‌صورت خودکار این کارها را انجام می‌دهد:
 
@@ -488,7 +491,7 @@ nano client_config.json
 | `socks_port` | `1080` | پورت SOCKS5 محلی. |
 | `google_host` | `216.239.38.120` | میزبان/IP لبه گوگل برای اتصال (پورت همیشه `443` است). |
 | `sni` | `www.google.com` | مقدار SNI در TLS. یک رشته یا آرایه می‌پذیرد — `["www.google.com", "mail.google.com", "accounts.google.com"]` — هر SNI اتصال و bucket جداگانه دارد که می‌تواند پهنای باند را در مناطقی که per-domain throttle دارند چند برابر کند. |
-| `script_keys` | — | آرایه deploymentهای Apps Script. هر entry می‌تواند یک رشته Deployment ID خالی یا یک آبجکت `{ "id": "...", "account": "..." }` با برچسب اکانت گوگل باشد. **برچسب `account` کلیدی است**: کلاینت deploymentها را بر اساس اکانت گروه‌بندی می‌کند و به ازای هر *bucket اکانت* ۴ poll worker اجرا می‌کند (با بالا بردن `idle_slots_per_bucket` بیشتر هم می‌شود) که با per-account concurrency cap در Apps Script منطبق است. رشته خالی (یا آبجکت بدون برچسب) همگی در یک bucket ناشناس جمع می‌شوند — فقط زمانی مناسب است که همهٔ deploymentها زیر یک اکانت گوگل باشند؛ اگر روی چند اکانت هستند برچسب بزنید وگرنه parallelism را از دست می‌دهید. به [افزایش ظرفیت با چند deployment](#افزایش-ظرفیت-با-چند-deployment-پیشنهاد-میشود) مراجعه کنید. |
+| `script_keys` | — | آرایه deploymentهای Apps Script. هر entry می‌تواند یک رشتهٔ Deployment ID خالی یا یک آبجکت `{ "id": "...", "account": "..." }` با برچسب اکانت گوگل باشد. **برچسب `account` کلیدی است**: کلاینت deploymentها را بر اساس اکانت گروه‌بندی می‌کند و سقف idle long-poll هر bucket (`idle_slots_per_bucket`، پیش‌فرض ۲) را به ازای هر گروه اعمال می‌کند تا با per-account concurrency cap در Apps Script منطبق باشد. رشتهٔ خالی (یا آبجکت بدون برچسب) هر کدام یک bucket ضمنی جدا می‌گیرند — مناسب وقتی هر deployment زیر اکانت گوگل مجزای خودش است، اما اگر چند تای آن‌ها در واقع زیر یک اکانت باشند ممکن است throttle per-account ایجاد شود. برای رفتار درست با `account` برچسب بزنید. به [افزایش ظرفیت با چند deployment](#افزایش-ظرفیت-با-چند-deployment-پیشنهاد-میشود) مراجعه کنید. |
 | `tunnel_key` | — | کلید AES-256 به‌صورت hex (۶۴ کاراکتر). باید با سرور یکسان باشد. |
 | `socks_user` | *(اختیاری)* | نام کاربری SOCKS5 (RFC 1929). وقتی تنظیم شود، کلاینت‌ها باید احراز هویت کنند وگرنه اتصال رد می‌شود. باید همراه با `socks_pass` تنظیم شود — هر دو با هم یا هیچ‌کدام. |
 | `socks_pass` | *(اختیاری)* | رمز SOCKS5 متناظر با `socks_user`. |
@@ -552,7 +555,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/Kianmhz/GooseRelayVPN/main/scr
 
 اگر `Code.gs` را تغییر دادید — مثلاً برای تغییر IP VPS — باید در ویرایشگر Apps Script یک **deployment جدید** بسازید (Deploy → **New deployment**، نه فقط "Manage deployments"). صرفاً ذخیره کردن کد چیزی را عوض نمی‌کند؛ URL زنده `/exec` نسخه منتشرشده قبلی را سرو می‌کند. بعد از deploy جدید، `script_keys` را در `client_config.json` به‌روزرسانی کنید.
 
-نسخهٔ فعلی `Code.gs` تعداد فراخوانی هر deployment را هم می‌شمارد و از طریق `doGet` در دسترس می‌گذارد. اگر deployment قدیمی دارید، یک بار deploy مجدد باعث می‌شود فیلد `script=N` در خط دوره‌ای `[stats]` کلاینت ظاهر شود (در غیر این صورت تونل بدون مشکل کار می‌کند، فقط عدد سمت اسکریپت را نمی‌بینید).
+نسخهٔ فعلی `Code.gs` متادیتای forwarder/protocol را از طریق `doGet` در دسترس می‌گذارد و pre-flight کلاینت از آن برای تشخیص ناسازگاری نسخه استفاده می‌کند. شمارش فراخوانی per-deployment هم پیاده‌سازی شده اما فقط وقتی فعال می‌شود که در بالای `Code.gs` مقدار `ENABLE_INVOCATION_COUNTING = true` بگذارید (به‌صورت پیش‌فرض خاموش است تا doPost زیر فشار سریع بماند). اگر می‌خواهید فیلد `script=N` در خط دوره‌ای `[stats]` کلاینت ظاهر شود، آن را فعال کنید.
 
 ---
 
@@ -572,7 +575,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/Kianmhz/GooseRelayVPN/main/scr
 - **احراز هویت = تگ AES-GCM.** هیچ رمز عبور یا گواهی مشترکی نیست. فریم‌هایی که `Open()` آن‌ها fail شود بی‌صدا drop می‌شوند.
 - **Apps Script هرگز متن خام را نمی‌بیند.** اسکریپت یک forwarder ~۳۰ خطی است؛ کلید AES فقط روی کامپیوتر شما و VPS شماست.
 - **DNS از تونل عبور می‌کند.** سرور SOCKS5 از یک resolver خنثی استفاده می‌کند؛ از `socks5h://` استفاده کنید تا DNS در نقطه خروج resolve شود نه محلی.
-- **Long-poll تمام‌دوطرفه.** VPS هر درخواست را تا ۸ ثانیه باز نگه می‌دارد؛ کلاینت **۴ worker موازی به ازای هر «bucket» اکانت برچسب‌خورده** در `script_keys` اجرا می‌کند (پیش‌فرض؛ با `idle_slots_per_bucket` می‌توان بیشتر کرد) — یعنی ۱ اکانت = ۴ worker، ۲ اکانت = ۸ worker، ۳ اکانت = ۱۲ worker، فارغ از اینکه هر اکانت چند Deployment ID دارد. مدل bucket به این دلیل وجود دارد که per-second concurrency cap در Apps Script per-account است؛ اسکیل کردن worker بر اساس تعداد deployment باعث می‌شد کاربرانی که چند ID زیر یک اکانت دارند وسط جلسه با صفحات HTML خطای Apps Script مواجه شوند. فریم‌های downstream در یک پنجره کوچک (~۲۵ میلی‌ثانیه) coalesce می‌شوند تا برای استریم‌ها HTTP پاسخ‌های کمتر و بزرگ‌تر ساخته شود.
+- **Long-poll تمام‌دوطرفه.** VPS هر درخواست را تا ۸ ثانیه باز نگه می‌دارد؛ کلاینت **۳ worker موازی به ازای هر deployment** در `script_keys` اجرا می‌کند — یعنی ۱ deployment = ۳ worker، ۴ deployment = ۱۲ worker — و در کنار آن یک سمافور idle-slot هر bucket (پیش‌فرض ۲ به ازای هر `account` برچسب‌خورده) محدود می‌کند که چند تا از آن‌ها همزمان مجازند یک long-poll *idle* علیه یک اکانت گوگل نگه دارند. تفکیک بین اسکیل worker و سقف idle همان رفعِ رگرسیون v1.6 است که در آن کاربران با چند ID زیر یک اکانت به per-second concurrency cap می‌خوردند و وسط جلسه HTML خطا می‌دیدند. فریم‌های downstream در یک پنجرهٔ کوچک (~۲۵ میلی‌ثانیه) coalesce می‌شوند تا برای استریم‌ها HTTP پاسخ‌های کمتر و بزرگ‌تر ساخته شود.
 - **چند deployment سلامت‌محور.** وقتی `script_keys` بیش از یک deployment دارد، کلاینت endpointها را round-robin انتخاب می‌کند و هر کدام که بد رفتار کند به‌صورت نمایی blacklist می‌کند؛ یک retry در همان poll روی deployment سالم انجام می‌شود تا خطاهای موقتی ترافیک را drop نکنند.
 
 ### فرمت wire
@@ -591,6 +594,7 @@ GooseRelayVPN/
 │   ├── client/main.go              # Entry point: SOCKS5 listener + carrier loop
 │   └── server/main.go              # Entry point: VPS HTTP handler
 ├── internal/
+│   ├── protocol/                   # Wire-level constants both peers share (frame cap, batch caps, probe types)
 │   ├── frame/                      # Wire format, AES-GCM seal/open, batch packer
 │   ├── session/                    # Per-connection state, seq counters, rx/tx queues
 │   ├── socks/                      # SOCKS5 server + VirtualConn (net.Conn adapter)
@@ -623,13 +627,13 @@ GooseRelayVPN/
 | Pre-flight fails: `Apps Script cannot reach your VPS` | پورت 8443 روی VPS قابل دسترسی نیست. `sudo ufw allow 8443/tcp` را اجرا کنید و فایروال ارائه‌دهنده ابری را هم بررسی کنید. |
 | Log says `relay returned non-batch payload` | Apps Script به جای batch رمزشده، HTML برگردانده. سه علت رایج: (۱) deployment داخل `script_keys` زنده نیست یا **Who has access** روی `Anyone` نیست — دوباره deploy کنید (Deploy → **New deployment**) و `script_keys` را به‌روزرسانی کنید؛ (۲) deployment کنار فایل‌های دیگر در یک پروژه Apps Script موجود اضافه شده — یک پروژه **جدید** با فقط `Code.gs` بسازید و از آنجا deploy کنید؛ (۳) چند deployment زیر یک اکانت گوگل دارید و به per-second concurrency cap همان اکانت می‌خورید — entryهای `script_keys` را با `account` برچسب بزنید تا کلاینت per-account throttle کند (به [افزایش ظرفیت با چند deployment](#افزایش-ظرفیت-با-چند-deployment-پیشنهاد-میشود) مراجعه کنید). |
 | Log says `relay returned HTTP 404 via …` | Deployment ID در کانفیگ شما با `/exec` زنده‌ای مطابقت ندارد. دوباره deploy کنید و کانفیگ را به‌روزرسانی کنید. |
-| Log says `relay returned HTTP 500 via …` | Apps Script نمی‌تواند به `VPS_URL` برسد. آدرس سرور در `Code.gs` را چک کنید، مطمئن شوید VPS بالا است و TCP/8443 ورودی باز است. `curl http://your.vps.ip:8443/healthz` باید 200 برگرداند. |
+| Log says `relay returned HTTP 500 via …` | Apps Script نمی‌تواند به هیچ‌کدام از URLهای داخل `RELAY_URLS` برسد. آدرس(های) سرور در `Code.gs` را چک کنید، مطمئن شوید VPS بالا است و TCP/8443 ورودی باز است. `curl http://your.vps.ip:8443/healthz` باید 200 برگرداند. |
 | Log says `relay request failed via …: timeout` | اتصال fronted به گوگل fail می‌شود. یک `google_host` دیگر امتحان کنید — هر 216.239.x.120 که گوگل سرویس می‌دهد کار می‌کند. |
 | Browser hangs on every request | مطمئن شوید افزونه مرورگر روی SOCKS5 با **DNS through proxy** تنظیم شده است (نه SOCKS5 معمولی). در Firefox گزینه **Proxy DNS when using SOCKS v5** را فعال کنید. |
 | `[exit] dial X: ... timeout` در لاگ VPS | مقصد، IPهای دیتاسنتر را بلاک می‌کند یا VPS شما برای آن پورت اتصال خروجی ندارد. |
 | Cloudflare-protected sites show captchas | طبیعی است. IP VPS شما روی ASN دیتاسنتری است و bot scoring کلودفلر آن را علامت می‌زند. مشکل از تونل نیست. |
 | YouTube buffers a lot at 1080p | طبیعی است. تونل به دلیل overhead Apps Script حدود ۳۰۰ تا ۸۰۰ میلی‌ثانیه به هر round trip اضافه می‌کند. 480p راحت‌تر است. چند `script_keys` به throughput پایدار کمک می‌کند. |
-| One deployment hits quota mid-session | اگر `script_keys` بیش از یک عضو دارد، کلاینت به‌صورت خودکار چند ثانیه آن را blacklist می‌کند و ادامه می‌دهد. اگر فقط یک عضو دارید، مرور تا ریست سهمیه (~۱۰:۳۰ صبح به وقت ایران / نیمه‌شب Pacific) متوقف می‌شود. |
+| One deployment hits quota mid-session | اگر `script_keys` بیش از یک عضو دارد، کلاینت به‌صورت خودکار چند ثانیه آن را blacklist می‌کند و ادامه می‌دهد. اگر فقط یک عضو دارید، مرور تا ریست سهمیه در نیمه‌شب Pacific (حدود ۱۰:۳۰ صبح به وقت ایران در تابستان و ۱۱:۳۰ صبح در زمستان) متوقف می‌شود. |
 | Mismatched AES keys | علامت: کلاینت خطایی نشان نمی‌دهد اما ترافیک رد نمی‌شود؛ لاگ VPS خطوط `dial ...` ندارد. مطمئن شوید `tunnel_key` در دو کانفیگ بایت‌به‌بایت برابر است. |
 
 ---
@@ -641,7 +645,7 @@ GooseRelayVPN/
 - **AES-GCM تنها احراز هویت است.** هیچ رمز عبور، rate-limiting یا حسابداری per-user وجود ندارد. کلید را مثل پسورد ادمین سرور نگه دارید.
 - **Apps Script هر `doPost` را در داشبورد گوگل لاگ می‌کند** (فقط تعداد و مدت — Apps Script هرگز متن خام را نمی‌بیند).
 - **`socks_host` کلاینت را روی `127.0.0.1` نگه دارید** مگر اینکه واقعاً قصد اشتراک LAN داشته باشید.
-- **هر deployment در Apps Script محدودیت ~۲۰٬۰۰۰ فراخوانی در روز** روی حساب رایگان گوگل دارد.
+- **هر اکانت گوگل روی Apps Script رایگان محدودیت ~۲۰٬۰۰۰ فراخوانی UrlFetch در روز** دارد — بین همهٔ deploymentهای زیر آن اکانت مشترک است، نه per-deployment.
 
 ---
 

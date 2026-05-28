@@ -27,7 +27,7 @@ You can also support the project financially:
 
 - Never share `tunnel_key` with anyone. Anyone with this key can use your tunnel/VPS as if they are you.
 - A server with public internet access is required. Your exit server must be reachable from Google Apps Script.
-- Each Google Apps Script deployment ID has a quota of about 20,000 executions per day, and the quota resets around 10:30 AM Iran time (GMT+3:30).
+- Each Google account has a UrlFetch quota of about 20,000 executions per day on Apps Script's free tier (shared across every deployment under that account — it is **not** per deployment). The quota resets at midnight Pacific (~10:30 AM Iran time in summer, ~11:30 AM in winter).
 - You do not need to install a local MITM certificate in this project. The certificate setup in `MasterHttpRelayVPN` is for that project's architecture and is not required here.
 - This project was inspired by the idea in the main repository: https://github.com/masterking32/MasterHttpRelayVPN
 
@@ -177,10 +177,13 @@ This is the free Google-side piece that hides your traffic.
 1. Go to [Google Apps Script](https://script.google.com/) and sign in.
 2. Click **New project**.
 3. Delete the default code and paste everything from [`apps_script/Code.gs`](apps_script/Code.gs).
-4. Change this line to your VPS IP:
+4. Change this line to your VPS IP and port:
    ```javascript
-   const VPS_URL = 'http://YOUR.VPS.IP:8443/tunnel';
+   const RELAY_URLS = [
+     'http://YOUR.VPS.IP:8443/tunnel',
+   ];
    ```
+   `RELAY_URLS` is an array so you can list multiple VPS exit servers — `Code.gs` tries them in order and only falls over to the next one on an error. For a single VPS, one entry is enough.
 5. Click **Deploy → New deployment** → set type to **Web app**.
 6. Set **Execute as:** Me and **Who has access:** Anyone.
 7. Click **Deploy**. A dialog appears showing the **Deployment ID**. Copy that value and paste it into `script_keys`.
@@ -444,7 +447,7 @@ By default the client listens on `127.0.0.1:1080` so only your computer can use 
 
 The **~20,000 calls/day quota applies per Google account**, not per deployment or project — all deployments under the same account share one quota pool. The client polls about once per second when idle, so a single deployment can sustain steady use, but heavy days hit the cap. Real-time apps like **Telegram or X can drain the quota within a few hours** due to constant polling. To go beyond that, deploy `Code.gs` across **different Google accounts** and put all the Deployment IDs into `script_keys`.
 
-> ⚠️ **Label every deployment with the Google account it lives under.** The client scales its concurrency (4 poll workers per "bucket") by **distinct account labels**, not by deployment count — because Apps Script's per-second concurrency cap is also per-account. Two deployments under the same account share one quota and one bucket; two deployments under different accounts give you two buckets.
+> ⚠️ **Label every deployment with the Google account it lives under.** The client groups deployments by account so it can apply the per-account idle-poll cap correctly — Apps Script's per-second concurrency cap is also per-account. Two deployments under the same account share one bucket and one daily quota; two deployments under different accounts give you two buckets and two quotas. (The worker pool itself always scales with deployment count — 3 workers per deployment — regardless of labeling. What the labels control is how many of those workers may hold a *standing idle long-poll* against one Google account at the same time.)
 
 ```json
 {
@@ -457,9 +460,9 @@ The **~20,000 calls/day quota applies per Google account**, not per deployment o
 }
 ```
 
-The example above is 4 deployments across 2 accounts → **2 buckets → 8 poll workers, 2 standing long-polls** — twice the parallelism and twice the daily quota of a single account, without overloading either.
+The example above is 4 deployments across 2 accounts → **12 poll workers (3 per deployment), 2 buckets, 4 standing idle long-polls (2 per bucket × 2 buckets)** — twice the daily quota of a single account, with the per-account idle cap respected so neither account trips Apps Script's anti-abuse.
 
-If you leave the labels off (`["ID1", "ID2", ...]` plain strings), all deployments collapse into one anonymous bucket — same workers and same idle slots as a single deployment. The client logs a `WARN` at startup so you don't miss it. Use plain strings only if all your deployments really are under one Google account; otherwise label them.
+If you leave the labels off (`["ID1", "ID2", ...]` plain strings), each deployment becomes its own implicit bucket — so the worker pool and idle slots still scale, but if multiple unlabeled deployments are actually under the same Google account the client cannot enforce the per-account cap and you may see Apps Script HTML error pages mid-session. The startup `[carrier]` log line tells you which mode is active. Label deployments with `account` whenever you can; bare strings exist mainly as a backward-compat affordance for older configs.
 
 What the client does for you automatically:
 
@@ -486,7 +489,7 @@ What the client does for you automatically:
 | `socks_port` | `1080` | Port for the local SOCKS5 listener. |
 | `google_host` | `216.239.38.120` | Google edge IP/host to dial (port is fixed to `443`). |
 | `sni` | `www.google.com` | SNI presented during the TLS handshake. Accepts a single string or an array — `["www.google.com", "mail.google.com", "accounts.google.com"]` — where each SNI host gets its own connection and throttle bucket, which can multiply available bandwidth in regions that rate-limit per domain name. |
-| `script_keys` | — | Array of Apps Script deployments. Each entry can be a bare Deployment ID string or an object `{ "id": "...", "account": "..." }` labeling the Google account it's deployed under. **The `account` label is load-bearing**: the client groups deployments by account and runs 4 poll workers per *account bucket* (more if you raise `idle_slots_per_bucket`), matching Apps Script's per-account concurrency cap. Bare strings (or unlabeled objects) all collapse into one anonymous bucket — fine if every deployment is under one Google account, but if they're under multiple accounts, label them or you lose the parallelism. See [Increase capacity with multiple deployments](#increase-capacity-with-multiple-deployments). |
+| `script_keys` | — | Array of Apps Script deployments. Each entry can be a bare Deployment ID string or an object `{ "id": "...", "account": "..." }` labeling the Google account it's deployed under. **The `account` label is load-bearing**: the client groups deployments by account and applies the per-bucket idle-poll cap (`idle_slots_per_bucket`, default 2) per group, matching Apps Script's per-account concurrency cap. Bare strings (or unlabeled objects) each get their own implicit bucket — fine if every deployment really is under its own Google account, but if multiple are actually under the same account you may trip per-account throttling. Label them with `account` to make this work correctly. See [Increase capacity with multiple deployments](#increase-capacity-with-multiple-deployments). |
 | `tunnel_key` | — | 64-char hex AES-256 key. Must match the server byte-for-byte. |
 | `socks_user` | *(optional)* | SOCKS5 username (RFC 1929). When set, clients must authenticate or the connection is rejected. Must be paired with `socks_pass` — set both or neither. |
 | `socks_pass` | *(optional)* | SOCKS5 password paired with `socks_user`. |
@@ -550,7 +553,7 @@ You don't need to touch your Apps Script deployment unless you also change `Code
 
 If you change `Code.gs` — for example to point at a new VPS IP — you must create a **new deployment** in the Apps Script editor (Deploy → **New deployment**, not just "Manage deployments"). Saving alone does nothing; the live `/exec` URL serves the published version. After redeploying, update `script_keys` in `client_config.json`.
 
-The current `Code.gs` tracks per-deployment invocation counts and exposes them via `doGet`, along with forwarder/protocol metadata used by the client's pre-flight check. If you have an older deployment, redeploying once enables the `script=N` field in the client's periodic `[stats]` line and avoids version-mismatch warnings.
+The current `Code.gs` exposes forwarder/protocol metadata via `doGet`, which the client's pre-flight check uses to detect version mismatches. Per-deployment invocation counting is also implemented, but only fires when you set `ENABLE_INVOCATION_COUNTING = true` at the top of `Code.gs` (off by default so `doPost` stays fast under contention). Enable it if you want the `script=N` field in the client's periodic `[stats]` line.
 
 ---
 
@@ -574,7 +577,7 @@ Key invariants:
 - **Authentication = AES-GCM tag.** No shared password, no certificates. Frames that fail `Open()` are dropped silently.
 - **Apps Script never sees plaintext.** The script is a ~30-line forwarder; the AES key lives only on your machine and the VPS.
 - **DNS travels through the tunnel.** The SOCKS5 server uses a no-op resolver; use `socks5h://` so DNS is resolved at the exit, not locally.
-- **Long-poll, full-duplex.** The VPS holds each request open for up to 8s waiting for downstream bytes; the client runs **4 concurrent poll workers per labeled `account` bucket** in `script_keys` (default; scales further with `idle_slots_per_bucket`) — so 1 account = 4 workers, 2 accounts = 8 workers, 3 accounts = 12 workers, regardless of how many deployment IDs each account has. The bucket model exists because Apps Script's per-second concurrency cap is per-account; scaling workers by deployment count instead caused users with multiple IDs under one account to see Apps Script HTML error pages mid-session. Downstream frames are coalesced in a small (~25 ms) window so streaming workloads send fewer, larger HTTP responses.
+- **Long-poll, full-duplex.** The VPS holds each request open for up to 8s waiting for downstream bytes; the client runs **3 concurrent poll workers per deployment** in `script_keys` — so 1 deployment = 3 workers, 4 deployments = 12 workers — while a per-bucket idle-slot semaphore (default 2 per labeled `account`) caps how many of those workers can hold a *standing* long-poll against one Google account at once. The split between worker scaling and idle-poll capping is the fix for the v1.6 regression where users with multiple IDs under one account hit Apps Script's per-second concurrency cap and saw HTML error pages mid-session. Downstream frames are coalesced in a small (~25 ms) window so streaming workloads send fewer, larger HTTP responses.
 - **Health-aware multi-deployment.** When `script_keys` lists more than one deployment, the client picks endpoints in round-robin and exponentially blacklists any that misbehave; one same-poll retry is attempted on a fresh deployment so transient failures don't drop traffic.
 
 ### Wire format
@@ -593,6 +596,7 @@ GooseRelayVPN/
 │   ├── client/main.go              # Entry point: SOCKS5 listener + carrier loop
 │   └── server/main.go              # Entry point: VPS HTTP handler
 ├── internal/
+│   ├── protocol/                   # Wire-level constants both peers share (frame cap, batch caps, probe types)
 │   ├── frame/                      # Wire format, AES-GCM seal/open, batch packer
 │   ├── session/                    # Per-connection state, seq counters, rx/tx queues
 │   ├── socks/                      # SOCKS5 server + VirtualConn (net.Conn adapter)
@@ -627,13 +631,13 @@ GooseRelayVPN/
 | Pre-flight fails: `Apps Script cannot reach your VPS` | Port 8443 on your VPS is not reachable. Run `sudo ufw allow 8443/tcp` on the VPS and check your cloud provider's firewall rules. |
 | Log says `relay returned non-batch payload` | Apps Script returned an HTML page instead of an encrypted batch. Three common causes: (1) the deployment in `script_keys` isn't live, or **Who has access** is not set to `Anyone` — re-deploy (Deploy → **New deployment**) and update `script_keys`; (2) the deployment was added to an existing Apps Script project alongside other files — create a **new** project with only `Code.gs` in it, then deploy from there; (3) you have multiple deployments under the same Google account and are hitting that account's per-second concurrency cap — label `script_keys` entries with their `account` so the client throttles per-account (see [Increase capacity with multiple deployments](#increase-capacity-with-multiple-deployments)). |
 | Log says `relay returned HTTP 404 via …` | The Deployment ID in your config doesn't match a live `/exec`. Re-deploy and update the config. |
-| Log says `relay returned HTTP 500 via …` | Apps Script can't reach `VPS_URL`. Check the server address in `Code.gs`, confirm the VPS is up, and confirm inbound TCP/8443 is open. `curl http://your.vps.ip:8443/healthz` should return 200. |
+| Log says `relay returned HTTP 500 via …` | Apps Script can't reach any URL in `RELAY_URLS`. Check the server address(es) in `Code.gs`, confirm the VPS is up, and confirm inbound TCP/8443 is open. `curl http://your.vps.ip:8443/healthz` should return 200. |
 | Log says `relay request failed via …: timeout` | Fronted connection to Google is failing. Try a different `google_host` — any 216.239.x.120 served by Google works. |
 | Browser hangs on every request | Make sure your browser extension uses SOCKS5 with **DNS through proxy** enabled (not plain SOCKS5). In Firefox, check **Proxy DNS when using SOCKS v5**. |
 | `[exit] dial X: ... timeout` on the VPS server logs | The target host blocks datacenter IPs, or your VPS has no outbound connectivity for that port. |
 | Cloudflare-protected sites show captchas | Expected. Your VPS's IP is on a datacenter ASN, which Cloudflare's bot scoring often flags. Not a tunnel bug. |
 | YouTube buffers a lot at 1080p | Expected. The tunnel adds ~300-800ms per round trip due to Apps Script dispatch overhead. 480p is comfortable. Deploying multiple `script_keys` (see above) helps with sustained throughput. |
-| One deployment hits quota mid-session | If `script_keys` has more than one entry, the client automatically blacklists the failing one for a few seconds and keeps going on the others. With only one entry, browsing stops until the quota resets (~10:30 AM Iran time / midnight Pacific). |
+| One deployment hits quota mid-session | If `script_keys` has more than one entry, the client automatically blacklists the failing one for a few seconds and keeps going on the others. With only one entry, browsing stops until the quota resets at midnight Pacific (~10:30 AM Iran time in summer, ~11:30 AM in winter). |
 | Mismatched AES keys | Symptom: client logs no errors but no traffic flows; VPS logs no `dial ...` lines. Confirm `tunnel_key` is byte-identical in both configs. |
 
 ---
@@ -645,7 +649,7 @@ GooseRelayVPN/
 - **AES-GCM is the only authentication.** There's no password, no rate-limiting, no per-user accounting. Treat the key like a server-admin password.
 - **Apps Script logs every `doPost` invocation** in Google's dashboard (count and duration only — Apps Script never sees plaintext).
 - **Keep `socks_host` on the client at `127.0.0.1`** unless you specifically want LAN sharing.
-- **Each Apps Script deployment is rate-limited to ~20,000 calls/day** on free Google accounts.
+- **Each Google account is rate-limited to ~20,000 Apps Script UrlFetch calls/day** on the free tier — shared across every deployment under that account, not per-deployment.
 
 ---
 
