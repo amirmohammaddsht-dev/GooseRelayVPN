@@ -71,9 +71,9 @@ Your application sends TCP bytes through the SOCKS5 listener on your computer. T
 
 ## Step-by-Step Setup Guide
 
-### Step 1: Get an VPS
+### Step 1: Get a VPS
 
-You need a Linux VPS with a public IP. Any provider works.
+You need a VPS with a public IP. Linux or Windows Server — any provider works.
 
 ### Step 2: Get the binaries
 
@@ -592,6 +592,23 @@ Key invariants:
 - **Frame** (plaintext, inside the sealed batch): `session_id (16) || seq (u64 BE) || flags (u8) || target_len (u8) || target || payload_len (u32 BE) || payload`
 - **Batch seal** (AES-GCM): the entire batch is sealed once — `nonce (12 bytes) || AES-GCM(u16 frame_count || [u32 frame_len || frame_bytes] …)` — one nonce and auth-tag per HTTP body, not per frame.
 - **HTTP body**: `base64(nonce || ciphertext+tag)`, base64 so it survives Apps Script's `ContentService` text round-trip.
+
+---
+
+## Threat model
+
+GooseRelayVPN exists to defeat a specific kind of adversary: an ISP or state-level actor that controls DNS resolution on the user's network, can redirect traffic via BGP or transparent proxying, and may attempt TLS interception of foreign traffic. This kind of filtering typically still leaves a small set of Google service IPs reachable. This tool routes through that gap.
+
+Four layers stack to defeat that model:
+
+1. **A hardcoded Google edge IP** in `client_config.json` — the client never asks the local resolver for `script.google.com`, so DNS hijacking has nothing to hijack.
+2. **TLS certificate validation** on the outer hop — the adversary cannot impersonate Google without Google's private key, and the handshake fails closed if it tries.
+3. **AES-256-GCM** end-to-end between client and VPS, with the 16-byte GCM authentication tag — defeats both *passive observation* (no key, no plaintext) and *active tampering* (a modified byte fails the tag check and the whole batch is dropped).
+4. **A no-op SOCKS5 resolver** on the client — the destination hostname for tunneled traffic travels through the tunnel as a string and is resolved on the VPS, so the adversary cannot see *what* the user is browsing.
+
+The same architecture also functions as a conventional VPN at the destination end: because the exit is a VPS outside the filtered network, destination sites see the VPS's IP, not the user's. This enables **IP masking** and **geo-unblocking** for services that block traffic from the user's region at the network level — cloud providers, app stores, banks, and the like. These are standard VPN benefits that fall out of having the exit in a permitted country.
+
+Like any single-hop tunnel, this isn't a complete security solution: a compromised VPS, a compelled Google account, or DPI pattern-fingerprinting can each break the threat model. For the explicit out-of-scope list and why each one matters, see [ARCHITECTURE.md → Threat model](ARCHITECTURE.md#threat-model).
 
 ---
 

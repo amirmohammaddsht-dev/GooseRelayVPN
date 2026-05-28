@@ -127,6 +127,113 @@ See [internal/frame/crypto.go](internal/frame/crypto.go).
 
 ---
 
+## Threat model
+
+The project exists to defeat a specific class of adversary: an ISP,
+national firewall, or other on-path attacker that controls DNS
+resolution, can redirect traffic via BGP or transparent proxying,
+and may attempt TLS interception on traffic leaving the user's
+network. The threat model that motivated this project was a
+state-level filter doing all three at once: foreign domain names
+resolved to network-operator-controlled IPs, and traffic that did
+reach the open internet was DPI-inspected and selectively blocked.
+
+Even under that level of filtering, a small set of Google service
+IPs typically remain reachable. This tool routes through that gap:
+by domain-fronting to those reachable Google IPs, traffic that
+would otherwise be blocked is delivered as ordinary-looking Google
+traffic.
+
+### What it defends against
+
+Each row names an attacker capability, the defense in the codebase
+that addresses it, and what happens if the attack succeeds against
+that defense.
+
+| Capability | Defense | If the defense fails |
+| --- | --- | --- |
+| **DNS hijacking** — the adversary returns a poisoned A record for `script.google.com` | Hardcoded Google edge IP in `client_config.json`. The client dials this IP directly and never consults the local resolver for the front host. | No effect — there's no DNS lookup to hijack. |
+| **TLS interception** on the outer hop | Standard TLS certificate validation against the system root CAs (Go stdlib default). The interceptor doesn't have Google's private key. | TLS handshake fails closed before any bytes are exchanged. |
+| **Passive observation** of ciphertext | AES-256-GCM with a 32-byte key known only to the client and VPS. Apps Script never holds the key. | Nothing readable inside the AES-GCM security bound. |
+| **Active tampering** of ciphertext in flight | The 16-byte GCM authentication tag is computed over the ciphertext at seal time. A modified byte fails `Open()`; the entire batch is rejected. | The batch is dropped (no corrupted bytes ever reach the session); the carrier retries on the next poll. |
+| **Local DNS leak** — the laptop resolves the actual destination hostname and reveals what the user is browsing | The SOCKS5 listener registers a no-op resolver. Target hostnames travel through the tunnel as strings and are resolved on the VPS. | None — local DNS is never consulted for tunneled traffic. |
+| **Traffic fingerprinting by destination IP** | All client → upstream traffic terminates at a Google edge IP, indistinguishable from ordinary Google use at the IP layer. | Out of scope for IP-layer fingerprinting; pattern-layer fingerprinting is addressed separately below. |
+
+### As a VPN, too
+
+The threat-model framing emphasizes defending against the *upstream*
+adversary — the ISP between the user and the open internet. But the
+same architecture also provides what people normally call "VPN
+behavior" at the *downstream* end: destination sites and services
+see the VPS's IP, not the user's.
+
+- **IP masking.** Destination sites cannot identify the user by
+  source IP. The VPS handles `net.Dial`; sites see only the VPS.
+- **Geo-unblocking.** Services that block traffic from the user's
+  region at the network level — cloud providers, app stores, banks,
+  and the like — are reachable through a VPS in a permitted
+  country. Buying a VPS in Germany or the Netherlands and pointing
+  this tool at it gives the same destination-side IP as any other
+  VPN in those countries.
+- **DNS-from-VPS.** Because the SOCKS5 listener uses a no-op resolver
+  (see [internal/socks/server.go](internal/socks/server.go)), even
+  hostname lookups for the destination happen on the VPS. The user's
+  local ISP never learns *what* the user is browsing.
+
+### What it does NOT defend against
+
+Listing these honestly is more important than over-claiming the scope
+of what's covered. Each one is a real attack a determined adversary
+could mount; this project does not address any of them.
+
+- **A compromised VPS.** The exit holds half the AES key and dials
+  targets on the user's behalf. An attacker with VPS root can
+  decrypt traffic, log destinations, or inject responses. Treat the
+  VPS as a trusted endpoint.
+- **A compromised client machine.** The AES key sits in
+  `client_config.json` on disk. Malware on the laptop reads it and
+  the tunnel becomes transparent to that attacker.
+- **A compelled or compromised Google account.** Apps Script never
+  sees plaintext, but a sufficiently motivated adversary could
+  subpoena Apps Script logs to see traffic *volume*, *timing*, and
+  the existence of the deployment. Payloads remain encrypted; the
+  *existence* of a tunnel does not.
+- **Sophisticated protocol fingerprinting by DPI.** At the TCP/TLS
+  layer this looks like HTTPS to Google. At the *pattern* layer —
+  long-poll cadence, batch sizes, request frequency — it is
+  identifiable by an adversary that builds a classifier on those
+  signatures. Padding and timing-randomization mitigations are not
+  implemented; that would be a substantial future project.
+- **Quota exhaustion as denial of service.** Apps Script's
+  per-account daily limit is a hard cap. An adversary with knowledge
+  of the deployment IDs cannot decrypt traffic, but could probably
+  saturate the quota by spamming the `/exec` URL.
+
+### Why defense in depth, not defense in single
+
+It is tempting to say "AES handles it." It does not — strip out any
+one layer and the threat model degrades in a specific, observable
+way:
+
+- Remove AES-GCM → the adversary reads everything.
+- Use raw AES-CTR instead of GCM → the adversary can corrupt
+  traffic without being noticed. The GCM tag is what makes
+  tampering visible.
+- Remove TLS certificate validation → the adversary impersonates
+  Google on the outer hop and serves its own batches that fail
+  decryption on the client side. The tunnel breaks, but no
+  plaintext is exposed.
+- Remove the hardcoded Google IP → DNS hijacking redirects the
+  client to the adversary's server.
+- Remove the no-op SOCKS resolver → the adversary sees every
+  hostname the user browses to in cleartext, even though it can't
+  read the body of the responses.
+
+The layers cover distinct capabilities a single adversary may exercise
+simultaneously. They aren't redundancy; they're coverage.
+
+---
+
 ## Package map
 
 ```
